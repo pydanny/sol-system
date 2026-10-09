@@ -187,8 +187,7 @@ func _draw() -> void:
 	for star in stars:
 		var p = Vector2(fposmod(star.x - ship.x * 0.35, size.x), fposmod(star.y - ship.y * 0.35, size.y))
 		draw_circle(p, star.z, Color(0.4,0.6,0.7,0.35))
-	for i in 8:
-		draw_arc(screen(Vector2.ZERO), RADII[i], 0, TAU, 160, Color(0.23,0.4,0.5,0.22), 1.0, true)
+	draw_labeled_orbits()
 	var sun = screen(Vector2.ZERO)
 	draw_circle(sun, 132, Color(1,0.65,0.25,0.07))
 	draw_arc(sun, SUN_RADIUS, 0, TAU, 64, Color("ffbf64"), 2, true)
@@ -219,6 +218,32 @@ func _draw() -> void:
 	draw_ui(size)
 	if not running or won or paused:
 		draw_overlay(size)
+
+func draw_labeled_orbits() -> void:
+	# Fixed world-space spacing keeps names attached to the orbit as the camera scrolls.
+	for i in 8:
+		var radius: float = RADII[i]
+		var original_count = maxi(8, int(round(TAU * radius / 420.0)))
+		var count = maxi(4, int(round(original_count / 2.0)))
+		var step = TAU / count
+		var text: String = NAMES[i]
+		var width = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+		var half_gap = (width + 24.0) / (2.0 * radius)
+		for marker in count:
+			var angle = marker * step
+			var start = angle + half_gap
+			var finish = angle + step - half_gap
+			var segments = maxi(4, int(ceil((finish - start) * radius / 16.0)))
+			draw_arc(screen(Vector2.ZERO), radius, start, finish, segments, Color(COLORS[i], 0.22), 1.0, true)
+			var anchor = screen(Vector2.from_angle(angle) * radius)
+			if not get_viewport_rect().grow(100).has_point(anchor):
+				continue
+			var rotation = angle + PI * 0.5
+			if cos(rotation) < 0.0:
+				rotation += PI
+			draw_set_transform(anchor, rotation)
+			label_at(Vector2(-width * 0.5, 4), text, 12, Color(COLORS[i], 0.85))
+			draw_set_transform(Vector2.ZERO)
 
 func draw_ellipse_ring(p: Vector2, c: Color) -> void:
 	var points = PackedVector2Array()
