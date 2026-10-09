@@ -4,15 +4,17 @@ const INK = Color("e6f5f3")
 const MUTED = Color("718c9c")
 const TEAL = Color("65f5cf")
 const SUN_MU = 18000000.0
-const SUN_RADIUS = 56.0
+const SUN_RADIUS = 112.0
+const FIELD_RADIUS = 5700.0
+const FLYBY_MARGIN = 170.0
 const SHIP_RADIUS = 19.0
 const THRUST = 310.0
 const MAX_SPEED = 680.0
 const NAMES = ["MERCURY", "VENUS", "EARTH", "MARS", "JUPITER", "SATURN", "URANUS", "NEPTUNE"]
-const RADII = [260.0, 460.0, 690.0, 950.0, 1320.0, 1680.0, 2020.0, 2370.0]
-const SIZES = [12.0, 21.0, 23.0, 17.0, 46.0, 38.0, 29.0, 28.0]
-# Arcade-scaled gravitational parameters: distinct pulls, with thrust strong enough to escape.
-const PLANET_MU = [260000.0, 760000.0, 900000.0, 420000.0, 2400000.0, 1850000.0, 1250000.0, 1150000.0]
+const RADII = [520.0, 920.0, 1380.0, 1900.0, 2640.0, 3360.0, 4040.0, 4740.0]
+const SIZES = [24.0, 42.0, 46.0, 34.0, 92.0, 76.0, 58.0, 56.0]
+# Strong arcade gravity for slingshots: every planet has half the sun’s strength.
+const PLANET_MU = SUN_MU * 0.5
 const COLORS = [Color("b7aaa0"), Color("e5ba7e"), Color("63b9f7"), Color("f3836f"), Color("dfbd91"), Color("ecd49a"), Color("8adfd5"), Color("779af9")]
 var planets: Array[Vector2] = []
 var phases = [0.3, 2.5, -1.2, 0.7, 3.4, 1.8, 4.4, 5.6]
@@ -59,7 +61,7 @@ func reset_run() -> void:
 	paused = false
 	trail.clear()
 	update_planets()
-	ship = planets[2] + planets[2].normalized() * 60.0
+	ship = planets[2] + planets[2].normalized() * (SIZES[2] + SHIP_RADIUS + 18.0)
 	heading = ship.angle()
 	velocity = Vector2(-planets[2].y, planets[2].x).normalized() * sqrt(SUN_MU / RADII[2]) * 0.45
 	notice = "LAUNCH FROM EARTH"
@@ -90,10 +92,12 @@ func _physics_process(delta: float) -> void:
 			acceleration += Vector2.from_angle(heading) * THRUST
 		if Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN):
 			velocity *= exp(-1.5 * delta)
-		velocity = (velocity + acceleration * delta).limit_length(MAX_SPEED)
+		# Preserve collision boosts above normal cruising speed.
+		velocity = (velocity + acceleration * delta).limit_length(maxf(MAX_SPEED, velocity.length()))
 		ship += velocity * delta
 		resolve_sun_collision()
-		if ship.length() > 2850.0:
+		resolve_planet_collisions()
+		if ship.length() > FIELD_RADIUS:
 			velocity += -ship.normalized() * 700.0 * delta
 		check_visits()
 		trail.append(ship)
@@ -115,6 +119,32 @@ func resolve_sun_collision() -> void:
 		notice = "SOLAR BOUNCE"
 		flash = 2.0
 
+func planet_velocity(index: int) -> Vector2:
+	var angular_speed: float = sqrt(SUN_MU / pow(RADII[index], 3)) * 0.45
+	return Vector2(-planets[index].y, planets[index].x) * angular_speed
+
+func resolve_planet_collisions() -> void:
+	for i in 8:
+		var radius: float = SIZES[i] + SHIP_RADIUS
+		var offset = ship - planets[i]
+		if offset.length_squared() >= radius * radius:
+			continue
+		var surface_velocity = planet_velocity(i)
+		var relative_velocity = velocity - surface_velocity
+		var normal = offset.normalized() if not offset.is_zero_approx() else -relative_velocity.normalized()
+		if normal.is_zero_approx():
+			normal = Vector2.RIGHT
+		ship = planets[i] + normal * (radius + 0.5)
+		if relative_velocity.dot(normal) < 0.0:
+			relative_velocity = relative_velocity.bounce(normal)
+		# Escape speed for the softened gravitational potential, with a little margin.
+		var escape_speed = sqrt(2.0 * PLANET_MU / sqrt(2.0 * radius * radius)) * 1.15
+		var outward_speed = relative_velocity.dot(normal)
+		relative_velocity += normal * maxf(0.0, escape_speed - outward_speed)
+		velocity = surface_velocity + relative_velocity
+		notice = NAMES[i] + " BOUNCE"
+		flash = 2.0
+
 func gravity_at(point: Vector2) -> Vector2:
 	var result = -point.normalized() * SUN_MU / maxf(point.length_squared(), 10000.0)
 	for i in 8:
@@ -125,11 +155,11 @@ func planet_gravity_at(point: Vector2, index: int) -> Vector2:
 	var offset = planets[index] - point
 	# Softening avoids singularities and makes acceleration continuous through a planet.
 	var softening: float = SIZES[index] + SHIP_RADIUS
-	return offset * PLANET_MU[index] / pow(offset.length_squared() + softening * softening, 1.5)
+	return offset * PLANET_MU / pow(offset.length_squared() + softening * softening, 1.5)
 
 func check_visits() -> void:
 	for i in 8:
-		if i != 2 and not visited.has(i) and ship.distance_to(planets[i]) < SIZES[i] + 85.0:
+		if i != 2 and not visited.has(i) and ship.distance_to(planets[i]) < SIZES[i] + FLYBY_MARGIN:
 			visited[i] = true
 			notice = NAMES[i] + " VISITED"
 			flash = 3.0
@@ -160,9 +190,9 @@ func _draw() -> void:
 	for i in 8:
 		draw_arc(screen(Vector2.ZERO), RADII[i], 0, TAU, 160, Color(0.23,0.4,0.5,0.22), 1.0, true)
 	var sun = screen(Vector2.ZERO)
-	draw_circle(sun, 66, Color(1,0.65,0.25,0.07))
+	draw_circle(sun, 132, Color(1,0.65,0.25,0.07))
 	draw_arc(sun, SUN_RADIUS, 0, TAU, 64, Color("ffbf64"), 2, true)
-	draw_arc(sun, 45, 0, TAU, 64, Color("ffbf64"), 1, true)
+	draw_arc(sun, 90, 0, TAU, 64, Color("ffbf64"), 1, true)
 	label_at(sun + Vector2(-15, 5), "SOL", 14, Color("ffbf64"))
 	for j in range(1, trail.size()):
 		draw_line(screen(trail[j-1]), screen(trail[j]), Color(0.3,0.95,0.8,float(j)/trail.size()*0.25), 1, true)
@@ -174,7 +204,7 @@ func _draw() -> void:
 		if i == 5:
 			draw_ellipse_ring(p,c)
 		if i != 2:
-			draw_arc(p,SIZES[i]+85,0,TAU,64,Color(TEAL if visited.has(i) else c,0.2),1,true)
+			draw_arc(p,SIZES[i]+FLYBY_MARGIN,0,TAU,64,Color(TEAL if visited.has(i) else c,0.2),1,true)
 		label_at(p+Vector2(SIZES[i]+12,0),NAMES[i],14,c)
 		label_at(p+Vector2(SIZES[i]+12,20),"VISITED" if visited.has(i) else ("HOME" if i == 2 else "FLYBY ZONE"),11,MUTED)
 		if i != 2 and not visited.has(i) and (p.x < 260 or p.x > size.x-30 or p.y < 110 or p.y > size.y-80):
@@ -193,7 +223,7 @@ func _draw() -> void:
 func draw_ellipse_ring(p: Vector2, c: Color) -> void:
 	var points = PackedVector2Array()
 	for j in 65:
-		points.append(p + Vector2(cos(j*TAU/64)*60,sin(j*TAU/64)*15).rotated(-0.35))
+		points.append(p + Vector2(cos(j*TAU/64)*120,sin(j*TAU/64)*30).rotated(-0.35))
 	draw_polyline(points,c,1,true)
 
 func draw_ui(size: Vector2) -> void:
@@ -216,9 +246,9 @@ func draw_ui(size: Vector2) -> void:
 	var radar = Vector2(140,size.y-159)
 	draw_arc(radar,85,0,TAU,64,Color(MUTED,0.35),1,true)
 	for i in 8:
-		draw_circle(radar+planets[i]/2850*85,2.5,COLORS[i])
+		draw_circle(radar+planets[i]/FIELD_RADIUS*85,2.5,COLORS[i])
 	draw_circle(radar,4,Color("ffbf64"))
-	draw_circle(radar+ship/2850*85,3,TEAL)
+	draw_circle(radar+ship/FIELD_RADIUS*85,3,TEAL)
 	label_at(Vector2(42,size.y-49),"SYSTEM RADAR",10,MUTED)
 	label_at(Vector2(288,49),"DEEP SPACE / SOL SECTOR",12,MUTED)
 	label_at(Vector2(size.x-205,49),"%03d  m/s" % velocity.length(),18,TEAL)
